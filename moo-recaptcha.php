@@ -233,7 +233,10 @@ function moo_recaptcha_verify( $token = null ) {
         'timeout' => 10,
     ]);
 
-    if ( is_wp_error( $response ) ) return false;
+    if ( is_wp_error( $response ) ) {
+        error_log( 'Moo reCAPTCHA: Google API unreachable - ' . $response->get_error_message() );
+        return true; // API 無法連線時放行，避免封鎖正常使用者
+    }
 
     $body = json_decode( wp_remote_retrieve_body( $response ), true );
 
@@ -256,18 +259,24 @@ function moo_recaptcha_widget( $form_id = '' ) {
     $ver = $o['version'];
 
     if ( $ver === 'v3' ) {
-        // v3：隱形 token，自動取得
+        // v3：隱形 token，於表單提交時即時取得（避免 2 分鐘過期問題）
         echo '<input type="hidden" name="g-recaptcha-response" id="moo-recaptcha-token-' . esc_attr($form_id) . '">';
         echo '<script>
         document.addEventListener("DOMContentLoaded", function() {
-            if (typeof grecaptcha !== "undefined") {
+            var tokenEl = document.getElementById("moo-recaptcha-token-' . esc_js($form_id) . '");
+            if (!tokenEl) return;
+            var form = tokenEl.closest("form");
+            if (!form) return;
+            form.addEventListener("submit", function(e) {
+                if (typeof grecaptcha === "undefined") return; // API 未載入時直接放行
+                e.preventDefault();
                 grecaptcha.ready(function() {
                     grecaptcha.execute(' . json_encode($o['site_key']) . ', {action: "submit"}).then(function(token) {
-                        var el = document.getElementById("moo-recaptcha-token-' . esc_js($form_id) . '");
-                        if (el) el.value = token;
+                        tokenEl.value = token;
+                        form.submit();
                     });
                 });
-            }
+            });
         });
         </script>';
     } else {
